@@ -48,7 +48,7 @@ static uint32_t ax_hsv(int h, int s, int v)      /* h 0..359, s v 0..255 */
 }
 static void ax_palette(void)
 {
-    static const uint32_t BASE[16] = {0x05040C, 0x0F1630, 0x1C2E54, 0x31609A, 0x5CE4FF, 0xF2F6FF, 0x8A9ABE, 0x4A5676,
+    static const uint32_t BASE[16] = {0x06040C, 0x0F1630, 0x1C2E54, 0x31609A, 0x5CE4FF, 0xF2F6FF, 0x8A9ABE, 0x4A5676,
                                       0xFF2A58, 0x22FFE2, 0xFF3ACB, 0xFFB43A, 0x5E3E12, 0x0A0D1C, 0, 0};
     static const uint8_t V[3] = {255, 150, 66};
     uint32_t pal[64];
