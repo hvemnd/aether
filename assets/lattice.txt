@@ -1,0 +1,71 @@
+# AETHER//SYNTAX: the Lattice catalog. Every musical object is a set of points on the ring of twelve.
+# tools/gen_lattice.py turns this file into build/gen/ax_lattice.h (masks, names, interval vectors, symmetry).
+#
+# kind | name | symbol | cosmic name | pitch classes from 0 (a trailing * marks an altered tone) | tier | formula
+#   kind: P particle (note), B bond (interval class), F field (scale / mode), C bound state (chord)
+#   tier: the CHALLENGE tier that first asks for it (1 basics, 2 sharps / sevenths / all modes, 3 everything)
+#   In names and symbols '#' and 'b' after a note or a degree are drawn as sharp and flat signs.
+
+P | C     | C     | Prime     | 0  | 1 |
+P | C#/Db | C#    | Splinter  | 1  | 2 |
+P | D     | D     | Tide      | 2  | 1 |
+P | D#/Eb | Eb    | Veil      | 3  | 2 |
+P | E     | E     | Spire     | 4  | 1 |
+P | F     | F     | Hearth    | 5  | 1 |
+P | F#/Gb | F#    | Rift      | 6  | 2 |
+P | G     | G     | Crown     | 7  | 1 |
+P | G#/Ab | Ab    | Ash       | 8  | 2 |
+P | A     | A     | Lumen     | 9  | 1 |
+P | A#/Bb | Bb    | Drift     | 10 | 2 |
+P | B     | B     | Threshold | 11 | 1 |
+
+B | minor 2nd / major 7th | m2 | Friction    | 0 1 | 1 |
+B | major 2nd / minor 7th | M2 | Stride      | 0 2 | 1 |
+B | minor 3rd / major 6th | m3 | Shadow Bond | 0 3 | 2 |
+B | major 3rd / minor 6th | M3 | Light Bond  | 0 4 | 2 |
+B | perfect 4th / 5th     | P4 | Keystone    | 0 5 | 3 |
+B | tritone               | TT | Schism      | 0 6 | 3 |
+
+F | Ionian         | major           | The Bright Field     | 0 2 4 5 7 9 11      | 1 | 1 2 3 4 5 6 7
+F | Dorian         | dorian          | The Balanced Field   | 0 2 3 5 7 9 10      | 2 | 1 2 b3 4 5 6 b7
+F | Phrygian       | phrygian        | The Shadow Field     | 0 1 3 5 7 8 10      | 2 | 1 b2 b3 4 5 b6 b7
+F | Lydian         | lydian          | The Ascending Field  | 0 2 4 6 7 9 11      | 2 | 1 2 3 #4 5 6 7
+F | Mixolydian     | mixolydian      | The Wandering Field  | 0 2 4 5 7 9 10      | 2 | 1 2 3 4 5 6 b7
+F | Aeolian        | natural minor   | The Deep Field       | 0 2 3 5 7 8 10      | 1 | 1 2 b3 4 5 b6 b7
+F | Locrian        | locrian         | The Broken Field     | 0 1 3 5 6 8 10      | 3 | 1 b2 b3 4 b5 b6 b7
+F | Harmonic minor | harmonic minor  | The Serpent Field    | 0 2 3 5 7 8 11      | 3 | 1 2 b3 4 5 b6 7
+F | Melodic minor  | melodic minor   | The Rising Shadow    | 0 2 3 5 7 9 11      | 3 | 1 2 b3 4 5 6 7
+F | Major penta    | major pentatonic| The Open Star        | 0 2 4 7 9           | 1 | 1 2 3 5 6
+F | Minor penta    | minor pentatonic| The Dark Star        | 0 3 5 7 10          | 1 | 1 b3 4 5 b7
+F | Blues          | blues           | The Bent Star        | 0 3 5 6 7 10        | 2 | 1 b3 4 b5 5 b7
+F | Whole-tone     | whole-tone      | The Hexagon          | 0 2 4 6 8 10        | 3 | 1 2 3 #4 #5 b7
+F | Dim half-whole | diminished HW   | The Octagram         | 0 1 3 4 6 7 9 10    | 3 | 1 b2 #2 3 #4 5 6 b7
+F | Dim whole-half | diminished WH   | The Mirror Octagram  | 0 2 3 5 6 8 9 11    | 3 | 1 2 b3 4 b5 b6 6 7
+F | Augmented      | augmented       | The Twin Triangle    | 0 3 4 7 8 11        | 3 | 1 b3 3 5 #5 7
+F | Chromatic      | chromatic       | The Divine All       | 0 1 2 3 4 5 6 7 8 9 10 11 | 3 | all twelve
+
+C | major triad        |         | Light Trine        | 0 4 7          | 1 |
+C | minor triad        | m       | Shadow Trine       | 0 3 7          | 1 |
+C | diminished triad   | dim     | Collapsing Trine   | 0 3 6          | 2 |
+C | augmented triad    | aug     | Perfect Trine      | 0 4 8          | 2 |
+C | sus2               | sus2    | Open Trine         | 0 2 7          | 1 |
+C | sus4               | sus4    | Suspended Trine    | 0 5 7          | 1 |
+C | major 6            | 6       | Light Quartet      | 0 4 7 9        | 3 |
+C | minor 6            | m6      | Veiled Quartet     | 0 3 7 9        | 3 |
+C | major 7            | maj7    | Radiant Quartet    | 0 4 7 11       | 2 |
+C | dominant 7         | 7       | Restless Quartet   | 0 4 7 10       | 2 |
+C | minor 7            | m7      | Dusk Quartet       | 0 3 7 10       | 2 |
+C | half-diminished    | m7b5    | Fading Quartet     | 0 3 6* 10      | 2 |
+C | diminished 7       | dim7    | The Square         | 0 3 6 9        | 3 |
+C | minor-major 7      | mMaj7   | Haunted Quartet    | 0 3 7 11       | 3 |
+C | augmented major 7  | maj7#5  | Stretched Quartet  | 0 4 8* 11      | 3 |
+C | dominant 7 sus4    | 7sus4   | Hovering Quartet   | 0 5 7 10       | 3 |
+C | add 9              | add9    | Bright Cluster     | 0 2 4 7        | 2 |
+C | major 9            | maj9    | Radiant Quintet    | 0 2 4 7 11     | 3 |
+C | dominant 9         | 9       | Restless Quintet   | 0 2 4 7 10     | 3 |
+C | minor 9            | m9      | Dusk Quintet       | 0 2 3 7 10     | 3 |
+C | dominant 7b9       | 7b9     | Splintered Quintet | 0 1* 4 7 10    | 3 |
+C | dominant 7#9       | 7#9     | Torn Quintet       | 0 3* 4 7 10    | 3 |
+C | major 7#11         | maj7#11 | Lydian Quintet     | 0 4 6* 7 11    | 3 |
+C | minor 11           | m11     | Dusk Sextet        | 0 2 3 5 7 10   | 3 |
+C | dominant 13        | 13      | Restless Sextet    | 0 2 4 7 9 10   | 3 |
