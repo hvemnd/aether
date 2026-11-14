@@ -1,0 +1,117 @@
+# AETHER//SYNTAX: build the .fwsc on every push to main (and by hand), publish it as a GitHub release, and keep a copy
+# on the `builds` branch (builds/<version>/). The version is AETHER_VERSION's; a version already released is built
+# again and its release's files replaced. The JieLi toolchain comes from JieLi's server, as release.yml's does.
+name: aether-build
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: aether-build
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  PYTHON_VERSION: "3.11"
+  PILLOW_VERSION: "11.1.0"
+  FONTTOOLS_VERSION: "4.66.1"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Version
+        run: |
+          set -euo pipefail
+          v="$(tr -d ' \n\r' < AETHER_VERSION)"
+          [[ "$v" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?(-[A-Za-z0-9.]+)?$ ]] || { echo "::error::AETHER_VERSION '$v'"; exit 1; }
+          {
+            echo "VERSION=$v"
+            echo "JIELI_TOOLCHAIN=$HOME/.jieli/toolchain"
+            echo "AC79_SDK=$GITHUB_WORKSPACE/tools/sdk"
+          } >> "$GITHUB_ENV"
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Python packages (Pillow with Raqm, fontTools)
+        run: |
+          set -euo pipefail
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends libfribidi0 libraqm0 zip
+          python3 -m pip install --disable-pip-version-check "Pillow==$PILLOW_VERSION" "fonttools==$FONTTOOLS_VERSION"
+
+      - name: The JieLi toolchain (pkgman.jieliapp.com)
+        run: sh tools/get_toolchain.sh "$HOME/.jieli"
+
+      - name: Tests (the Lattice, then every mode played headless)
+        run: |
+          set -euo pipefail
+          python3 tools/build.py --gen-only
+          mkdir -p build/host
+          cc -std=c99 -Wall -Wextra -Werror -Wno-unused-function -Ibuild/gen -Ifirmware/src -o build/host/ax_core_test \
+             tests/ax_core_test.c
+          build/host/ax_core_test
+          cc -std=gnu11 -O2 -w -Itools/emu/web/compat -Ibuild/gen -Ifirmware/src -DEMU_WEB \
+             -o build/host/ax_headless tests/ax_headless.c -lm
+          build/host/ax_headless build/ax-run
+
+      - name: Build (./build.sh --release)
+        run: |
+          set -euo pipefail
+          ulimit -n 8192 || true
+          ./build.sh --release "$VERSION" 2>&1 | tee build-log.txt
+          rel="build/release-$VERSION"
+          test -s "$rel/coralflower-$VERSION.fwsc"
+          (cd "$rel" && sha256sum -c SHA256SUMS && zip -q -r LICENSES.zip LICENSES)
+          cp build-log.txt "$rel/"
+          ls -l "$rel"
+
+      - name: Keep it on the builds branch
+        run: |
+          set -euo pipefail
+          rel="build/release-$VERSION"
+          src="$(git rev-parse HEAD)"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch --depth 1 origin builds || true
+          git worktree add --detach ../out
+          cd ../out
+          if git rev-parse --verify -q origin/builds >/dev/null; then git checkout -q -B builds origin/builds;
+          else git checkout -q --orphan builds; git rm -rq --cached . ; find . -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +; fi
+          mkdir -p "builds/$VERSION"
+          cp "$GITHUB_WORKSPACE/$rel"/*.fwsc "$GITHUB_WORKSPACE/$rel"/*-app.bin "$GITHUB_WORKSPACE/$rel"/SHA256SUMS \
+             "$GITHUB_WORKSPACE/$rel"/build-log.txt "builds/$VERSION/"
+          echo "$src" > "builds/$VERSION/SOURCE_COMMIT"
+          git add -A builds
+          git commit -q -m "AETHER//SYNTAX $VERSION, built from $src" || echo "nothing new"
+          git push origin builds
+
+      - name: Release
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
+        with:
+          tag_name: v${{ env.VERSION }}
+          target_commitish: ${{ github.sha }}
+          name: AETHER//SYNTAX ${{ env.VERSION }}
+          prerelease: true
+          body_path: docs/releases/${{ env.VERSION }}.md
+          fail_on_unmatched_files: true
+          files: |
+            build/release-${{ env.VERSION }}/coralflower-${{ env.VERSION }}.fwsc
+            build/release-${{ env.VERSION }}/coralflower-${{ env.VERSION }}-app.bin
+            build/release-${{ env.VERSION }}/SHA256SUMS
+            build/release-${{ env.VERSION }}/LICENSE
+            build/release-${{ env.VERSION }}/LICENSING.md
+            build/release-${{ env.VERSION }}/LICENSES.zip
