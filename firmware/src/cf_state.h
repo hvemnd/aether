@@ -54,6 +54,8 @@ typedef struct {
     uint8_t click;               /* the metronome's sound (cf_out.c CF_CLICKS) */
     uint8_t backdrop;            /* what is behind the plant (FL_BD_*, GLO > Display) */
     cf_fx_t fx;                  /* the effects chain: its order, what is on, the values (FX; cf_fx.c) */
+    uint8_t ax_theme;            /* AETHER//SYNTAX's colour theme (ax_ui.c AX_THEMES), in what was the record's padding byte
+                                  * before snd (its size stays) */
     uint16_t snd[2];             /* the parts' sounds: indices in the one row (cf_sound.c) */
     /* (new fields go here, at the end: cf_settings.c reads an older, shorter record and keeps the defaults past it) */
     uint8_t retrig;              /* a chord changed under held keys (GLO > Play > RETRIG): CF_RT_WAIT a chord button
@@ -133,7 +135,8 @@ static void cs_defaults(cf_set_t *s)
     s->boot_sound = 1;
     s->level_chord = s->level_layer = 104;       /* (params.c P_LEVEL's own) */
     s->level_drums = 104;
-    s->ax_cfg = 0;                               /* (AETHER//SYNTAX: full motion, the flash limit on, 120 BPM) */
+    s->ax_cfg = 0;
+    s->ax_theme = 0;                               /* (AETHER//SYNTAX: full motion, the flash limit on, 120 BPM) */
     s->snd_layer = 0xFFFFu;
     s->ch_layer = 2;                             /* (channel 3) */
     s->ch_drums = 9;                             /* (channel 10: General MIDI's drums) */

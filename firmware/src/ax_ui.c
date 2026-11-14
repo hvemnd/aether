@@ -17,6 +17,7 @@
  *   GLO settings (reduced motion, flash limit)  OCT- / OCT+ octave  HOME back to CoralFlower (hold HOME there: back here)
  */
 #include "ax_core.c"
+#include "ax_learn.c"
 
 /* ---------------------------------------------------------------- layout --- */
 #define AXC_X 120                                /* the Lattice's centre and radius */
@@ -46,20 +47,90 @@ static uint32_t ax_hsv(int h, int s, int v)      /* h 0..359, s v 0..255 */
     }
     return (uint32_t)r << 16 | (uint32_t)g << 8 | (uint32_t)b;
 }
+/* the themes (GLO, then ALGORITHM; kept). Each gives the fourteen interface colours (background, the structure dim to
+ * bright, the accent, ink, grey, dim, the glitch's red / teal / magenta, amber, dark amber, the deepest), how the
+ * twelve note colours are made (saturation and value for their bright, mid and dim steps), a tint they lean toward
+ * and how far, and the gold of the last form. The note colours keep a twelfth of the colour wheel each in every theme
+ * but MONO, so colour still means pitch. (No colour may start 0x01..0x05 in a 6-digit literal: the build's address
+ * check reads those as registers; such darks are written as decimal sums.) */
+typedef struct {
+    const char *name;
+    uint32_t base[14];
+    uint8_t sv[3][2];
+    uint32_t tint;
+    uint8_t tint_amt;
+    uint32_t gold, gold_d;
+} ax_theme_t;
+#define AXRGB(r, g, b) ((uint32_t)(r) << 16 | (uint32_t)(g) << 8 | (uint32_t)(b))
+static const ax_theme_t AX_THEMES[] = {
+    {"REZ", {AXRGB(6, 4, 12), 0x0F1630, 0x1C2E54, 0x31609A, 0x5CE4FF, 0xF2F6FF, 0x8A9ABE, 0x4A5676, 0xFF2A58, 0x22FFE2,
+             0xFF3ACB, 0xFFB43A, 0x5E3E12, 0x0A0D1C}, {{200, 255}, {230, 150}, {230, 66}}, 0, 0, 0xFFE066, 0x3A3010},
+    {"PHOSPHOR", {AXRGB(2, 10, 4), 0x0A2410, 0x14461E, 0x2A8A3A, 0x7CFF8C, 0xD8FFD8, 0x7FB088, 0x3E6646, 0xFF5A3A,
+                  0x5AFFC8, 0xC8FF5A, 0xE8FF6A, 0x3C4A12, 0x061208}, {{150, 255}, {190, 160}, {200, 70}}, 0x40FF60, 120,
+     0xEAFF8A, 0x2A3A10},
+    {"AMBER", {AXRGB(12, 6, 2), 0x2A1606, 0x4E2A0A, 0x8A4E14, 0xFFB040, 0xFFE8C0, 0xB89060, 0x6A4E2E, 0xFF3A20,
+               0xFFD27A, 0xFF7A3A, 0xFFC860, 0x5A3A10, 0x140A04}, {{150, 255}, {190, 160}, {200, 70}}, 0xFF9A20, 120,
+     0xFFF0A0, 0x3A2A08},
+    {"VAPOR", {0x14061E, 0x2A0E40, 0x4A1A6A, 0x8A3AB0, 0x3AF2FF, 0xFFE6FA, 0xC79AD8, 0x7A5A8A, 0xFF4AA0, 0x3AFFD8,
+               0xFF6AF0, 0xFFC27A, 0x5A2A4A, 0x0E0418}, {{180, 255}, {210, 170}, {210, 80}}, 0xFF7AE0, 40, 0xFFE0FF,
+     0x40203A},
+    {"BLOOD MOON", {AXRGB(12, 2, 4), 0x2A0810, 0x4E0E1C, 0x8E1E30, 0xFF4A4A, 0xFFE0E0, 0xB88A8A, 0x6A3E44, 0xFFFFFF,
+                    0xFF9A6A, 0xFF2A80, 0xFF8A3A, 0x5A1A10, 0x140408}, {{190, 255}, {220, 150}, {220, 64}}, 0xFF2030,
+     80, 0xFFC08A, 0x3A1A0A},
+    {"ICE", {AXRGB(2, 8, 20), 0x0A1E3A, 0x143A66, 0x2A6AA8, 0xAAF0FF, 0xF4FCFF, 0x9AB8D0, 0x4E6A86, 0xFF5A8A, 0x7AFFF0,
+             0xB8A0FF, 0xE0F4FF, 0x2A4A5A, 0x06101E}, {{140, 255}, {170, 180}, {180, 80}}, 0x9AE0FF, 70, 0xFFFFFF,
+     0x2A3A4A},
+    {"SOLAR", {0x0E0A02, 0x2A1E06, 0x4E380C, 0x8E6618, 0xFFD040, 0xFFF6D8, 0xC0A870, 0x6E5E36, 0xFF4A20, 0xFFE68A,
+               0xFF8A2A, 0xFFE070, 0x5A4410, 0x161004}, {{180, 255}, {210, 165}, {210, 72}}, 0xFFC020, 60, 0xFFFFC0,
+     0x403410},
+    {"MONO", {AXRGB(4, 4, 4), 0x161616, 0x2C2C2C, 0x5A5A5A, 0xFFFFFF, 0xF0F0F0, 0x9A9A9A, 0x555555, 0xFFFFFF,
+              0xBBBBBB, 0xDDDDDD, 0xCCCCCC, 0x333333, 0x0A0A0A}, {{40, 255}, {40, 170}, {40, 80}}, 0xFFFFFF, 200,
+     0xFFFFFF, 0x333333},
+    {"NEON TOKYO", {0x08020E, 0x1E0630, 0x3A0C5A, 0x7A1AAA, 0xFF2AD0, 0xFFF0FF, 0xB08AD0, 0x6A4A8A, 0xFF2A58,
+                    0x22FFF0, 0xFF3ACB, 0xFFE03A, 0x5A2E12, 0x0C0418}, {{230, 255}, {240, 160}, {240, 70}}, 0, 0,
+     0xFFF07A, 0x3A3010},
+    {"ABYSS", {AXRGB(2, 8, 14), 0x062028, 0x0C3A48, 0x18707E, 0x3AFFE0, 0xD8FFF8, 0x7AAAB0, 0x3E6268, 0xFF6A4A,
+               0x5AFFB8, 0x7AB0FF, 0xFFD27A, 0x2A4A3A, AXRGB(2, 14, 18)}, {{180, 255}, {210, 150}, {210, 64}}, 0x20E0C0,
+     50, 0xEFFFC8, 0x203A30},
+    {"PAPER", {0xEEE6D4, 0xD8CDB4, 0xB8A888, 0x7A6A4E, 0x1A6A8A, 0x1E1A16, 0x6E6250, 0xA89A80, 0xD02A3A, 0x1A8A7A,
+               0xB03A9A, 0xC07A1A, 0xE0C890, 0xE4DAC4}, {{230, 170}, {150, 205}, {60, 232}}, 0, 0, 0x9A6A0A,
+     0xE0CC96},
+    {"FOREST", {AXRGB(4, 10, 6), 0x0E2014, 0x1C3A22, 0x3A6A3A, 0xB8E86A, 0xF0F6E0, 0x9AAA88, 0x56664A, 0xE8603A,
+                0x8AE8A8, 0xE8B04A, 0xE8D47A, 0x4A3A12, 0x08120A}, {{170, 240}, {200, 150}, {200, 64}}, 0x90C040, 60,
+     0xF4E88A, 0x3A3410},
+    {"SUNSET", {0x10040E, 0x2E0A22, 0x56123A, 0x9A2A5A, 0xFF8A3A, 0xFFF0E0, 0xD89AA0, 0x7E4A5E, 0xFF2A58, 0xFFC27A,
+                0xFF3A9A, 0xFFD25A, 0x5E2A12, 0x18060E}, {{200, 255}, {220, 165}, {220, 70}}, 0xFF6A40, 50, 0xFFE89A,
+     0x40240A},
+};
+#define AX_NTHEMES ((int)(sizeof AX_THEMES / sizeof AX_THEMES[0]))
+static uint32_t ax_mix(uint32_t a, uint32_t b, int t)   /* a toward b by t/255 */
+{
+    uint32_t r = 0;
+    int k;
+    for (k = 16; k >= 0; k -= 8) {
+        int x = (int)((a >> k) & 255u), y = (int)((b >> k) & 255u);
+        r |= (uint32_t)(x + (y - x) * t / 255) << k;
+    }
+    return r;
+}
 static void ax_palette(void)
 {
-    static const uint32_t BASE[16] = {0x06040C, 0x0F1630, 0x1C2E54, 0x31609A, 0x5CE4FF, 0xF2F6FF, 0x8A9ABE, 0x4A5676,
-                                      0xFF2A58, 0x22FFE2, 0xFF3ACB, 0xFFB43A, 0x5E3E12, 0x0A0D1C, 0, 0};
-    static const uint8_t V[3] = {255, 150, 66};
+    const ax_theme_t *th = &AX_THEMES[cs.ax_theme % AX_NTHEMES];
     uint32_t pal[64];
     int i, pc, lv;
     for (i = 0; i < 64; i++)
-        pal[i] = i < 16 ? BASE[i] : 0;
+        pal[i] = i < 14 ? th->base[i] : 0;
     for (pc = 0; pc < 12; pc++)                  /* C red, a twelfth of the colour wheel a semitone */
-        for (lv = 0; lv < 3; lv++)
-            pal[16 + pc * 3 + lv] = ax_hsv(pc * 30, lv == 0 ? 200 : 230, V[lv]);
-    pal[AXK_GOLD] = 0xFFE066;
-    pal[AXK_GOLD_D] = 0x3A3010;
+        for (lv = 0; lv < 3; lv++) {
+            uint32_t c = ax_hsv(pc * 30, th->sv[lv][0], th->sv[lv][1]);
+            if (th->tint_amt) {                  /* (toward the tint, at the step's own brightness) */
+                uint32_t t = ax_mix(0, th->tint, th->sv[lv][1]);
+                c = ax_mix(c, t, th->tint_amt);
+            }
+            pal[16 + pc * 3 + lv] = c;
+        }
+    pal[AXK_GOLD] = th->gold;
+    pal[AXK_GOLD_D] = th->gold_d;
 #if !defined CF_EMU && !defined CF_PANEL_PLAIN
     for (i = 0; i < 64; i++)
         pal[i] = cf_panel_fix(pal[i], i >= 16 || i == AXK_CYAN || i == AXK_RED || i == AXK_TEAL || i == AXK_MAG);
@@ -73,7 +144,7 @@ typedef struct {
     uint8_t life, c, kind;                       /* life: 0 dead, counts down in 8 ms steps */
 } axp_t;
 enum { AXPK_BURST, AXPK_ASH, AXPK_DUST };
-#define AX_NPART 96
+#define AX_NPART 64
 typedef struct {
     uint32_t due;                                /* the sixteenth it fires on */
     uint8_t what;                                /* AXQ_* */
@@ -122,8 +193,22 @@ static struct {
     ax_q_t q[AX_NQ];
     uint32_t rng;
     uint32_t last_beat;                          /* the last downbeat's sixteenth (the frame's pulse) */
+    /* LEARN */
+    uint8_t lph;                                 /* AXLP_*: choosing a lesson, teaching a card, asking one, its report */
+    uint8_t lsel;                                /* the lesson chosen (0..AXL_N-1) */
+    uint8_t lcard;                               /* the card on screen */
+    uint8_t llayers;                             /* the groove LEARN has built (right answers in a row, halved) */
+    uint8_t lmastered;                           /* the lesson was mastered this time */
+    uint8_t lsound_done;                         /* the prompt's sound has ended: its answer time counts from lt0 */
+    uint32_t lt0;
+    char tutor[44];                              /* the tutor's line (after a miss, and on the report) */
+    uint32_t tutor_until;
     uint32_t beat_ms;
 } ax;
+enum { AXLP_IDLE, AXLP_TEACH, AXLP_QUIZ, AXLP_DONE };
+static ax_learn_t axl;                           /* the cards' state: this power-on only */
+static int ax_lrn_on(void) { return ax.mode == AXM_LEARN && (ax.lph == AXLP_TEACH || ax.lph == AXLP_QUIZ); }
+static int ax_quiz(void) { return ax.run.on || ax_lrn_on(); }   /* a prompt is being asked (a challenge or LEARN) */
 
 static int ax_open(void) { return ax.open; }
 static int ax_motion(void) { return !(cs.ax_cfg & 1u); }          /* reduced motion off */
@@ -136,6 +221,7 @@ static void ax_set_bpm(int b)
     cf_post(CFE_AX, AXA_TEMPO, 0, b);
 }
 static uint32_t ax_now_step(void) { return axa_steps; }
+static void ax_num(char *b, int v);
 static void ax_cat(char *d, const char *s, uint32_t max)   /* (the unit's libc has str_cpy, not a strcat) */
 {
     uint32_t n = str_len(d);
@@ -872,6 +958,37 @@ static void ax_view_challenge(ax_view_t *v)
         if (ax.answered && ax.verdict == AXJ_RIGHT)
             v->s.mask = (uint16_t)(p->target | p->neutral);
         break;
+    case AXP_FIELD_PLAY:
+        ax_sig_init(&v->s, AX_FIELD, ax.answered || reveal ? p->target : (uint16_t)(1u << p->root), p->root);
+        str_cpy(v->a, "PLAY ", sizeof v->a);
+        {
+            char t[24];
+            ax_field_name(t, sizeof t, p->idx, p->root);
+            ax_cat(v->a, t, sizeof v->a);
+        }
+        str_cpy(v->b, "every note, any order", sizeof v->b);
+        break;
+    case AXP_CHORD_NAME:
+        ax_sig_init(&v->s, AX_BOUND, ax.answered || reveal ? p->target : 0, p->root);
+        str_cpy(v->a, "HEAR IT", sizeof v->a);
+        str_cpy(v->b, "a chord: turn ALGO, press REC", sizeof v->b);
+        if (ax.answered || reveal) {
+            str_cpy(v->b, AX_CHORDS[p->idx].name, sizeof v->b);
+        }
+        break;
+    case AXP_BOND_NAME: {
+        int a = p->ivl < 0 ? -p->ivl : p->ivl;
+        ax_sig_init(&v->s, AX_BOND, (uint16_t)(1u << p->root), p->root);
+        str_cpy(v->a, "HEAR IT", sizeof v->a);
+        str_cpy(v->b, "a bond: turn ALGO, press REC", sizeof v->b);
+        if (reveal || ax.answered) {
+            v->s.mask = p->shown;
+            v->s.bond_to = (int8_t)(((int)p->root + p->ivl + 120) % 12);
+            v->s.dir = (int8_t)(p->ivl > 0 ? 1 : -1);
+            str_cpy(v->b, AX_IVL_NAME[a], sizeof v->b);
+        }
+        break;
+    }
     case AXP_CHORD_PLAY:
     default:
         ax_sig_init(&v->s, AX_BOUND, ax.answered || reveal ? p->target : 0, p->root);
@@ -888,19 +1005,42 @@ static void ax_view_challenge(ax_view_t *v)
     }
     v->s.locked = ax.locked;
     v->s.struck = ax_struck_mask();
-    if (p->kind == AXP_CHORD_PLAY || p->kind == AXP_FIELD_MORPH)
+    if (p->kind == AXP_CHORD_PLAY || p->kind == AXP_FIELD_MORPH || p->kind == AXP_FIELD_PLAY)
         v->s.mask |= ax.locked;
     if (reveal || ax.hinted)
         v->s.glow = p->target;
     if (p->name_kind != 0xFF && ax.name_on && !ax.answered) {   /* the name ALGORITHM is on */
         int o = ax_name_opt(p, ax.name_i);
         str_cpy(v->b, "< ", sizeof v->b);
-        ax_cat(v->b, p->name_kind == AX_BOND ? AX_IVL_NAME[o] : AX_FIELDS[o].name, sizeof v->b);
+        ax_cat(v->b, ax_name_label(p, o), sizeof v->b);
         ax_cat(v->b, " >  REC", sizeof v->b);
+    }
+    if (ax.mode == AXM_LEARN && ax.lph == AXLP_TEACH) {   /* teaching: everything shown, the tip under it */
+        char t[24];
+        if (p->kind == AXP_BOND_PLAY || p->kind == AXP_BOND_NAME) {
+            v->s.mask = p->shown;
+            v->s.bond_to = (int8_t)(((int)p->root + p->ivl + 120) % 12);
+            v->s.dir = (int8_t)(p->ivl > 0 ? 1 : -1);
+        } else if (p->kind == AXP_FIELD_MORPH)
+            v->s.mask = (uint16_t)(p->target | p->neutral);
+        else if (p->kind == AXP_FIELD_MISSING) {
+            v->s.mask = (uint16_t)(p->shown | p->target);
+            v->s.ghost = 0;
+        } else {
+            v->s.mask = p->target | (p->kind <= AXP_NOTE_SIGIL ? 0 : p->shown);
+            v->s.root = p->root;
+        }
+        v->s.glow = p->target;
+        str_cpy(v->a, "NEW: ", sizeof v->a);
+        ax_learn_card_name(t, sizeof t, axl.card[ax.lcard]);
+        ax_cat(v->a, t, sizeof v->a);
+        ax_learn_tip(v->b, sizeof v->b, axl.card[ax.lcard]);
+        reveal = 1;
     }
     /* the tunnel never tells: the whole ring until the answer is out, a question's own visible nodes at most */
     if (ax.answered || reveal)
-        v->field = p->kind == AXP_BOND_PLAY || p->kind <= AXP_NOTE_SIGIL ? AX_ALL : (uint16_t)(p->shown | p->target);
+        v->field = p->kind == AXP_BOND_PLAY || p->kind == AXP_BOND_NAME || p->kind <= AXP_NOTE_SIGIL ? AX_ALL :
+                   (uint16_t)(p->shown | p->target);
     else
         v->field = p->kind == AXP_FIELD_MISSING || p->kind == AXP_FIELD_MORPH ? p->shown : AX_ALL;
 }
@@ -917,7 +1057,7 @@ static void ax_send_field(int root, uint16_t mask)
 }
 static void ax_explore_sound(void)
 {
-    if (ax.run.on || ax.summary)
+    if (ax.run.on || ax.summary || ax_lrn_on())
         return;
     if (ax.mode == AXM_FIELD || ax.mode == AXM_ORRERY)
         ax_send_field(ax.root, ax.fmask);
@@ -937,6 +1077,10 @@ static void ax_prompt_sound(void)
         cf_post(CFE_AX, AXA_PROMPT_ADD, (uint32_t)(AX_KEY_NOTE(p->start_key) + o), 0);
         cf_post(CFE_AX, AXA_PROMPT_ADD, (uint32_t)(AX_KEY_NOTE(p->start_key + p->ivl) + o), 0);
         cf_post(CFE_AX, AXA_PROMPT_GO, 0, 4);
+    } else if (p->kind == AXP_BOND_NAME) {
+        cf_post(CFE_AX, AXA_PROMPT_ADD, (uint32_t)(AX_KEY_NOTE(p->start_key) + o), 0);
+        cf_post(CFE_AX, AXA_PROMPT_ADD, (uint32_t)(AX_KEY_NOTE(p->start_key + p->ivl) + o), 0);
+        cf_post(CFE_AX, AXA_PROMPT_GO, 0, 4);
     } else if (p->kind == AXP_FIELD_NAME) {
         int base = 60 + p->root + o;
         for (i = 0; i < 12; i++)
@@ -944,7 +1088,59 @@ static void ax_prompt_sound(void)
                 cf_post(CFE_AX, AXA_PROMPT_ADD, (uint32_t)(base + i), 0);
         cf_post(CFE_AX, AXA_PROMPT_ADD, (uint32_t)(base + 12), 0);
         cf_post(CFE_AX, AXA_PROMPT_GO, 0, 2);
+    } else if (p->kind == AXP_CHORD_NAME) {       /* (the chord struck together, held a bar) */
+        int base = 48 + p->root + o, first = 1;
+        for (i = 0; i < 12; i++)
+            if ((AX_CHORDS[p->idx].mask >> i) & 1u) {
+                cf_post(CFE_AX, AXA_PROMPT_ADD, (uint32_t)(base + i), first ? 0 : 1);
+                first = 0;
+            }
+        cf_post(CFE_AX, AXA_PROMPT_GO, 0, 8);
     }
+}
+/* teaching: the thing itself, heard (a note, a bond, a chord struck then broken, a field up from its root) */
+static void ax_demo_sound(void)
+{
+    const ax_prompt_t *p = &ax.shown;
+    int i, o = 12 * ax.oct, base = 60 + p->root + o, first = 1;
+    uint16_t m = 0;
+    cf_post(CFE_AX, AXA_PROMPT_CLR, 0, 0);
+    switch (p->kind) {
+    case AXP_NOTE:
+    case AXP_NOTE_SIGIL:
+        cf_post(CFE_AX, AXA_PROMPT_ADD, (uint32_t)base, 0);
+        cf_post(CFE_AX, AXA_PROMPT_GO, 0, 8);
+        return;
+    case AXP_BOND_PLAY:
+    case AXP_BOND_NAME:
+    case AXP_FIELD_NAME:
+    case AXP_CHORD_NAME:
+        ax_prompt_sound();
+        return;
+    case AXP_CHORD_PLAY:
+        m = AX_CHORDS[p->idx].mask;
+        break;
+    case AXP_FIELD_MORPH:
+        m = AX_FIELDS[p->idx].mask;
+        break;
+    default:
+        m = AX_FIELDS[p->idx].mask;
+        break;
+    }
+    if (p->kind == AXP_CHORD_PLAY) {             /* (struck together) */
+        for (i = 0; i < 12; i++)
+            if ((m >> i) & 1u) {
+                cf_post(CFE_AX, AXA_PROMPT_ADD, (uint32_t)(base + i), first ? 0 : 1);
+                first = 0;
+            }
+        cf_post(CFE_AX, AXA_PROMPT_GO, 0, 8);
+        return;
+    }
+    for (i = 0; i < 12; i++)                     /* a field: up from its root, and the octave */
+        if ((m >> i) & 1u)
+            cf_post(CFE_AX, AXA_PROMPT_ADD, (uint32_t)(base + i), 0);
+    cf_post(CFE_AX, AXA_PROMPT_ADD, (uint32_t)(base + 12), 0);
+    cf_post(CFE_AX, AXA_PROMPT_GO, 0, 2);
 }
 
 /* -------------------------------------------------------------- a challenge --- */
@@ -998,6 +1194,118 @@ static void ax_run_stop(void)
     cf_post(CFE_AX, AXA_PROMPT_CLR, 0, 0);
     ax_explore_sound();
 }
+/* ------------------------------------------------------------------ LEARN --- */
+static void ax_tutor(const char *s, uint32_t ms)
+{
+    str_cpy(ax.tutor, s, sizeof ax.tutor);
+    ax.tutor_until = cu.now + ms;
+}
+/* the next card of the lesson: taught, or asked */
+static void ax_lrn_next(void)
+{
+    int teach = 0, i = ax_learn_next(&axl, &teach, &ax.rng);
+    const ax_prompt_t *p = &ax.shown;
+    ax.lcard = (uint8_t)i;
+    ax_learn_prompt(&axl, i, &ax.shown, &ax.rng);
+    ax.lph = teach ? AXLP_TEACH : AXLP_QUIZ;
+    ax.locked = 0;
+    ax.hinted = ax.answered = 0;
+    ax.verdict = AXJ_NONE;
+    ax.name_on = 0;
+    ax.name_i = 0;
+    ax.p_step = ax_now_step();
+    ax.reveal_until = 0;
+    ax.lsound_done = 0;
+    ax.lt0 = cu.now;
+    if (p->name_kind != 0xFF) {                  /* (the names start on the first offered) */
+        ax.name_i = 0;
+        if (teach) {                             /* teaching a name: ALGORITHM starts on the right one */
+            int k;
+            for (k = 0; k < ax_name_count(p) && ax_name_opt(p, k) != p->name_ans; k++)
+                ;
+            ax.name_i = (int16_t)k;
+            ax.name_on = 1;
+        }
+    }
+    if (p->kind <= AXP_NOTE_SIGIL)
+        ax_send_field(0, AX_FIELDS[0].mask);
+    else
+        ax_send_field(p->root, p->kind == AXP_FIELD_MISSING || p->kind == AXP_FIELD_MORPH ? p->shown :
+                      (uint16_t)(1u << p->root));
+    if (teach)
+        ax_demo_sound();
+    else
+        ax_prompt_sound();
+}
+static void ax_lrn_start(int lesson)
+{
+    ax_q_clear();
+    ax.lsel = (uint8_t)lesson;
+    ax_learn_start(&axl, lesson, &ax.rng);
+    ax.llayers = 0;
+    ax.lmastered = 0;
+    ax.tutor_until = 0;
+    ax_send_groove(0);
+    cf_post(CFE_AX, AXA_PULSE, 1, 0);
+    ax_lrn_next();
+    {
+        char b[24];
+        str_cpy(b, "LESSON ", sizeof b);
+        ax_num(b + 7, lesson + 1);
+        ax_say(b, 1200);
+    }
+}
+/* the lesson stopped or mastered: its report (what to work on) */
+static void ax_lrn_report(void)
+{
+    int w[3], n = ax_learn_weakest(&axl, w, 3), c, o, back = ax_learn_suggest_back(&axl);
+    char t[24];
+    cf_post(CFE_AX, AXA_PULSE, 0, 0);
+    cf_post(CFE_AX, AXA_PROMPT_CLR, 0, 0);
+    ax.lph = AXLP_DONE;
+    ax.locked = 0;
+    ax.tutor[0] = 0;
+    if (ax_learn_confusion(&axl, &c, &o)) {
+        str_cpy(ax.tutor, "you mix up ", sizeof ax.tutor);
+        ax_learn_card_short(t, sizeof t, axl.card[c]);
+        ax_cat(ax.tutor, t, sizeof ax.tutor);
+        ax_cat(ax.tutor, " and ", sizeof ax.tutor);
+        ax_learn_card_short(t, sizeof t, axl.card[o]);
+        ax_cat(ax.tutor, t, sizeof ax.tutor);
+    } else if (back >= 0) {
+        str_cpy(ax.tutor, "go back to lesson ", sizeof ax.tutor);
+        ax_num(ax.tutor + str_len(ax.tutor), back + 1);
+    } else if (ax.lmastered) {
+        str_cpy(ax.tutor, n ? "mastered: review the ones above" : "mastered: on to the next", sizeof ax.tutor);
+    } else
+        str_cpy(ax.tutor, n ? "keep going: the ones above first" : "PLAY to carry on", sizeof ax.tutor);
+    ax.tutor_until = 0xFFFFFFFFu;
+    if (ax.lmastered && ax.lsel + 1 < AXL_N && back < 0)
+        ax.lsel++;                               /* (PLAY: the next lesson) */
+    ax_send_groove(ax.llayers > 2 ? 2 : ax.llayers);
+}
+static void ax_lrn_teach_verdict(int verdict)
+{
+    if (verdict == AXJ_RIGHT) {
+        int x, y, pc;
+        ax_learn_taught(&axl, ax.lcard);
+        ax.answered = 1;
+        ax.verdict = AXJ_RIGHT;
+        for (pc = 0; pc < 12; pc++)
+            if ((ax.shown.target >> pc) & 1u) {
+                ax_node_xy(AXC_X, AXC_Y, AXC_R, pc, ax.fifths, &x, &y);
+                ax_q(ax_now_step() + 1u, AXQ_BURST, pc, 0, 8, x, y);
+            }
+        ax_q(ax_now_step() + 1u, AXQ_HIT, 0, 4, 1, 60, 0);
+        ax.next_step = ax_now_step() + 8u;
+        ax_say("got it", 900);
+    } else {
+        ax.locked = 0;
+        ax_say("not quite: follow the lights", 1400);
+        cf_post(CFE_AX, AXA_HIT, 8, 50);
+    }
+}
+
 static int ax_flash_ok(void)                     /* the flash limit: three full-screen flashes a second at most */
 {
     int i, n = 0;
@@ -1014,7 +1322,9 @@ static int ax_flash_ok(void)                     /* the flash limit: three full-
         }
     return 1;
 }
-static void ax_answer(int verdict)
+static void ax_answer2(int verdict, int other);
+static void ax_answer(int verdict) { ax_answer2(verdict, -1); }
+static void ax_answer2(int verdict, int other)   /* other: the name chosen instead (a named answer), or -1 */
 {
     const ax_prompt_t *p = &ax.shown;
     uint32_t s = ax_now_step() + 1u, i;
@@ -1022,6 +1332,10 @@ static void ax_answer(int verdict)
     uint16_t tgt = p->target;
     if (ax.answered)
         return;
+    if (ax_lrn_on() && ax.lph == AXLP_TEACH) {
+        ax_lrn_teach_verdict(verdict);
+        return;
+    }
     ax.answered = 1;
     ax.verdict = (uint8_t)verdict;
     cf_post(CFE_AX, AXA_PROMPT_CLR, 0, 0);
@@ -1035,7 +1349,7 @@ static void ax_answer(int verdict)
             ax_node_xy(AXC_X, AXC_Y, AXC_R, pcc, ax.fifths, &x, &y);
             note = 60 + p->root + pc + 12 * ax.oct;
             ax_q(s + (uint32_t)k, AXQ_BURST, pcc, 0, 10, x, y);
-            if (p->kind == AXP_CHORD_PLAY || p->kind == AXP_FIELD_MORPH) {
+            if (p->kind == AXP_CHORD_PLAY || p->kind == AXP_FIELD_MORPH || p->kind == AXP_FIELD_PLAY) {
                 ax_q(s + (uint32_t)k, AXQ_NOTE_ON, pcc, note, 1, 0, 0);
                 ax_q(s + (uint32_t)k + 2u, AXQ_NOTE_OFF, pcc, note, 1, 0, 0);
             }
@@ -1050,6 +1364,41 @@ static void ax_answer(int verdict)
         cf_post(CFE_AX, AXA_HIT, 8, 80);        /* (rim, twice: the miss, no pitch in it) */
         ax_q(s, AXQ_HIT, 0, 8, 1, 60, 0);
         ax_spawn(AXC_X, AXC_Y, 18, 0, AXPK_ASH);
+    }
+    if (ax_lrn_on()) {                           /* LEARN: the card's box, the tutor, the groove of a streak */
+        int was = ax_learn_mastered(&axl), oi = -1;
+        uint32_t ms = cu.now - ax.lt0;
+        if (other >= 0) {
+            static const uint8_t EAR[3] = {CK_IVL_EAR, CK_CHORD_EAR, CK_FIELD_EAR};
+            int kind = p->name_kind == AX_BOND ? EAR[0] : p->name_kind == AX_BOUND ? EAR[1] : EAR[2];
+            oi = ax_learn_card_of_opt(&axl, kind, other);
+        }
+        ax_learn_answer(&axl, ax.lcard, verdict == AXJ_RIGHT, ms, ax.hinted, oi);
+        if (verdict == AXJ_RIGHT) {
+            if ((axl.streak & 1u) == 0u && ax.llayers < AX_LAYERS)
+                ax.llayers++;
+        } else {
+            char t[40];
+            if (ax.llayers)
+                ax.llayers--;
+            ax_learn_tip(t, sizeof t, axl.card[ax.lcard]);
+            ax_tutor(t, 4000);                   /* (the tutor: what it is, said again) */
+        }
+        ax_send_groove(ax.llayers);
+        ax.next_step = ax_now_step() + (verdict == AXJ_RIGHT ? 8u : 24u);
+        if (!was && ax_learn_mastered(&axl)) {   /* mastered: the wash, the fill, the report after this answer */
+            ax.lmastered = 1;
+            ax.wash_pc = (uint8_t)p->root;
+            if (ax_flash_ok()) {
+                ax.wash_until = cu.now + 4u * 4u * ax_step_ms();
+                ax.wash_t0 = cu.now;
+            }
+            for (i = 0; i < 4; i++)
+                ax_q(s + 8u + i * 2u, AXQ_HIT, 0, i < 2 ? 7 : 5, 1, 80, 0);
+            ax_say("LESSON MASTERED", 2400);
+            ax_spawn(212, 38, 16, 9, AXPK_BURST);
+        }
+        return;
     }
     f = ax_run_answer(&ax.run, verdict, ax.hinted);
     ax_send_groove(ax.run.layers);
@@ -1092,7 +1441,10 @@ static void ax_enter(void)
     if (!ax.tier) {                              /* (the first time since power-on) */
         ax.tier = 1;
         ax.level = 100;
-        ax.mode = AXM_FIELD;
+        ax.mode = AXM_LEARN;
+        ax.lph = AXLP_IDLE;
+        ax.lsel = 0;
+        ax_learn_init(&axl);
         ax.root = 0;
         ax.field = 0;
         ax.fmask = AX_FIELDS[0].mask;
@@ -1116,6 +1468,8 @@ static void ax_leave(void)
     ax.open = 0;
     ax.run.on = 0;
     ax.summary = 0;
+    if (ax_lrn_on())
+        ax.lph = AXLP_IDLE;                      /* (the cards keep what they learned) */
     cf_post(CFE_AX, AXA_LEAVE, 0, 0);
     cf_palette_build();
     fb_full = 1;
@@ -1136,7 +1490,7 @@ static void ax_key(int key, int down)
         ax.key_last = (int8_t)key;
         ax.key_ms[key] = cu.now ? cu.now : 1u;
         cf_post(CFE_AX, AXA_NOTE, (uint32_t)note, cs.vel ? cs.vel : 100);
-        if (!ax.run.on || ax.answered || ax.summary) {
+        if (!ax_quiz() || ax.answered || ax.summary) {
             int x, y;
             ax_node_xy(AXC_X, AXC_Y, AXC_R, AX_KEY_PC(key), ax.fifths, &x, &y);
             ax_q(ax_now_step() + 1u, AXQ_BURST, AX_KEY_PC(key), 0, 5, x, y);
@@ -1152,7 +1506,7 @@ static void ax_key(int key, int down)
     } else {
         ax.held &= ~(1u << key);
         cf_post(CFE_AX, AXA_NOTE, (uint32_t)note, 0);
-        if (ax.run.on && !ax.answered && ax.shown.kind == AXP_CHORD_PLAY)
+        if (ax_quiz() && !ax.answered && ax.shown.kind == AXP_CHORD_PLAY)
             ax.locked = ax_pcs_of_keys(ax.held) & ax.shown.target;   /* (a key let go: its reticle goes) */
     }
 }
@@ -1173,8 +1527,8 @@ static void ax_enc1(int role, int d)
 {
     switch (role) {
     case EN_SELECT:
-        if (ax.run.on) {
-            ax_say("PLAY stops the challenge first", 1200);
+        if (ax_quiz()) {
+            ax_say(ax.run.on ? "PLAY stops the challenge first" : "PLAY stops the lesson first", 1200);
             break;
         }
         ax.mode = (uint8_t)wrapi(ax.mode + (d > 0 ? 1 : -1), AXM_N);
@@ -1184,20 +1538,30 @@ static void ax_enc1(int role, int d)
         ax_explore_sound();
         break;
     case EN_PRESET:                              /* the root: the Law of Rotation */
-        if (ax.run.on)
+        if (ax_quiz() || ax.mode == AXM_LEARN)
             break;
         ax.root = (uint8_t)wrapi(ax.root + (d > 0 ? 1 : -1), 12);
         ax.fmask = ax_rot(ax.fmask, d > 0 ? 1 : -1);
         ax_explore_sound();
         break;
     case EN_ALGO:
-        if (ax.run.on && !ax.answered && ax.shown.name_kind != 0xFF) {
+        if (ax.settings) {                       /* (settings open: the theme) */
+            cs.ax_theme = (uint8_t)wrapi(cs.ax_theme + (d > 0 ? 1 : -1), AX_NTHEMES);
+            ax_palette();
+            break;
+        }
+        if (ax.mode == AXM_LEARN && (ax.lph == AXLP_IDLE || ax.lph == AXLP_DONE)) {   /* the lesson */
+            ax.lsel = (uint8_t)wrapi(ax.lsel + (d > 0 ? 1 : -1), AXL_N);
+            ax.lph = AXLP_IDLE;
+            break;
+        }
+        if (ax_quiz() && !ax.answered && ax.shown.name_kind != 0xFF) {
             if (ax.name_on)
                 ax.name_i = (int16_t)(ax.name_i + (d > 0 ? 1 : -1));
             ax.name_on = 1;
             break;
         }
-        if (ax.run.on)
+        if (ax_quiz() || ax.mode == AXM_LEARN)
             break;
         if (ax.mode == AXM_BOUND)
             ax.chord = (uint8_t)wrapi(ax.chord + (d > 0 ? 1 : -1), AX_CHORDS_N);
@@ -1207,7 +1571,7 @@ static void ax_enc1(int role, int d)
         break;
     case EN_K1: {                                /* the anchor: the root to the next node of the same polygon */
         int nr, f;
-        if (ax.run.on || (ax.mode != AXM_FIELD && ax.mode != AXM_ORRERY))
+        if (ax_quiz() || (ax.mode != AXM_FIELD && ax.mode != AXM_ORRERY))
             break;
         f = ax_anchor_step(ax.fmask, ax.root, d, &nr);
         ax.root = (uint8_t)nr;
@@ -1241,31 +1605,51 @@ static void ax_button(uint32_t b)
     switch (b) {
     case B_HOME: ax_leave(); break;
     case B_PLAY:
+        if (ax.mode == AXM_LEARN) {              /* LEARN: the lesson chosen starts; PLAY again: its report */
+            if (ax_lrn_on())
+                ax_lrn_report();
+            else
+                ax_lrn_start(ax.lsel);
+            break;
+        }
         if (ax.run.on || ax.summary)
             ax_run_stop();
         else
             ax_run_begin();
         break;
     case B_REC:                                  /* the name chosen with ALGORITHM, as the answer */
-        if (ax.run.on && !ax.answered && ax.shown.name_kind != 0xFF && ax.name_on && !axa_prompt_busy)
-            ax_answer(ax_judge_name(&ax.shown, ax_name_opt(&ax.shown, ax.name_i)));
+        if (ax_quiz() && !ax.answered && ax.shown.name_kind != 0xFF && ax.name_on && !axa_prompt_busy) {
+            int opt = ax_name_opt(&ax.shown, ax.name_i), v = ax_judge_name(&ax.shown, opt);
+            ax_answer2(v, v == AXJ_RIGHT ? -1 : opt);
+        }
         break;
     case B_SCL:                                  /* hint */
-        if (ax.run.on && !ax.answered) {
+        if (ax_quiz() && !ax.answered && !(ax_lrn_on() && ax.lph == AXLP_TEACH)) {
             ax.hinted = 1;
+            if (ax.shown.name_kind != 0xFF) {    /* (a name: ALGORITHM goes to the right one) */
+                int k;
+                for (k = 0; k < ax_name_count(&ax.shown) && ax_name_opt(&ax.shown, k) != ax.shown.name_ans; k++)
+                    ;
+                ax.name_i = (int16_t)k;
+                ax.name_on = 1;
+            }
             ax_say("hint: it counts, but builds no layer", 1200);
         }
         break;
     case B_ARP:                                  /* the prompt again */
-        if (ax.run.on && !ax.answered)
-            ax_prompt_sound();
+        if (ax_quiz() && !ax.answered) {
+            if (ax_lrn_on() && ax.lph == AXLP_TEACH)
+                ax_demo_sound();
+            else
+                ax_prompt_sound();
+        }
         break;
     case B_FX:
         ax.fifths ^= 1u;
         ax_say(ax.fifths ? "THE FIFTH TRANSFORM: the ring by fifths" : "the chromatic face", 1500);
         break;
     case B_ENV:                                  /* the Law of Reflection */
-        if (ax.run.on)
+        if (ax_quiz() || ax.mode == AXM_LEARN)
             break;
         if (ax.mode == AXM_BOUND) {
             const ax_obj_t *o = &AX_CHORDS[ax.chord];
@@ -1295,11 +1679,11 @@ static void ax_button(uint32_t b)
         ax_explore_sound();
         break;
     case B_LFO:
-        if (!ax.run.on)
+        if (!ax_quiz() && ax.mode != AXM_LEARN)
             ax.shadow ^= 1u;
         break;
     case B_SEQ:
-        if (!ax.run.on) {
+        if (!ax_quiz()) {
             ax.groove ^= 1u;
             ax_explore_sound();
         }
@@ -1377,6 +1761,18 @@ static void ax_frame(void)
     } else if (ax.answered && ax.summary && (int32_t)(st - ax.next_step) >= 0) {
         ax.answered = 0;                         /* (the run's last answer shown: the summary stays) */
     }
+    if (ax_lrn_on()) {                           /* LEARN: the answer time counts from the end of the sound */
+        if (!ax.lsound_done && !axa_prompt_busy && (int32_t)(st - ax.p_step) > 1) {
+            ax.lsound_done = 1;
+            ax.lt0 = cu.now;
+        }
+        if (ax.answered && (int32_t)(st - ax.next_step) >= 0) {
+            if (ax.lmastered)
+                ax_lrn_report();
+            else
+                ax_lrn_next();
+        }
+    }
     if (ax.strip && (int32_t)(st - ax.strip_step) >= 0) {   /* the run over: a layer off each bar */
         ax.strip_step = st + 16u;
         if (ax.layers_heard)
@@ -1390,7 +1786,7 @@ static void ax_frame(void)
         ax_explore_sound();
     }
     {                                            /* ambient dust: more as the form ascends */
-        int want = ax.run.on ? 4 + 3 * ax.run.stage : 5, have = 0;
+        int want = ax.run.on ? 4 + 3 * ax.run.stage : ax_lrn_on() ? 4 + 3 * ax_stage_of(ax.llayers, 0) : 5, have = 0;
         for (i = 0; i < AX_NPART; i++)
             have += ax.p[i].life && ax.p[i].kind == AXPK_DUST;
         if (have < want && (ax_rand(&ax.rng) & 7u) == 0u)
@@ -1444,14 +1840,91 @@ static void ax_num(char *b, int v)               /* (v 0..999) */
 
 static void ax_draw_settings(void)
 {
-    fb_rect(20, 60, 200, 96, AXK_BG);
-    fb_frame(20, 60, 200, 96, AXK_S3);
-    fb_text_c(&CF_FONT_UI, 120, 66, "SETTINGS", AXK_WHITE, 1);
-    fb_text(&CF_FONT_UI, 32, 88, "FX   motion", AXK_GREY, 1);
-    fb_text_r(&CF_FONT_UI, 208, 88, ax_motion() ? "full" : "reduced", AXK_CYAN, 1);
-    fb_text(&CF_FONT_UI, 32, 106, "ENV  flash limit", AXK_GREY, 1);
-    fb_text_r(&CF_FONT_UI, 208, 106, ax_flash_limit() ? "3/s" : "off", AXK_CYAN, 1);
-    fb_text_c(&CF_FONT_UI, 120, 134, "GLO closes", AXK_DIM, 1);
+    int pc;
+    fb_rect(16, 44, 208, 128, AXK_BG);
+    fb_frame(16, 44, 208, 128, AXK_S3);
+    fb_text_c(&CF_FONT_UI, 120, 50, "SETTINGS", AXK_WHITE, 1);
+    fb_text(&CF_FONT_UI, 26, 72, "ALGO theme", AXK_GREY, 1);
+    fb_text_r(&CF_FONT_UI, 214, 72, AX_THEMES[cs.ax_theme % AX_NTHEMES].name, AXK_CYAN, 1);
+    for (pc = 0; pc < 12; pc++)                  /* (the theme's twelve note colours) */
+        fb_rect(30 + pc * 15, 90, 12, 6, AXK_HUE(pc, 0));
+    fb_text(&CF_FONT_UI, 26, 104, "FX   motion", AXK_GREY, 1);
+    fb_text_r(&CF_FONT_UI, 214, 104, ax_motion() ? "full" : "reduced", AXK_CYAN, 1);
+    fb_text(&CF_FONT_UI, 26, 122, "ENV  flash limit", AXK_GREY, 1);
+    fb_text_r(&CF_FONT_UI, 214, 122, ax_flash_limit() ? "3/s" : "off", AXK_CYAN, 1);
+    fb_text_c(&CF_FONT_UI, 120, 150, "GLO closes", AXK_DIM, 1);
+}
+
+/* a card as a small sigil (the lesson screen): its concept on C */
+static void ax_card_sigil(uint16_t card, int cx, int cy, int r)
+{
+    ax_sig_t g;
+    int k = AXC_KIND(card), x = AXC_IDX(card);
+    switch (k) {
+    case CK_NOTE: ax_sig_init(&g, AX_PARTICLE, (uint16_t)(1u << x), x); break;
+    case CK_IVL:
+    case CK_IVL_EAR:
+        ax_sig_init(&g, AX_BOND, (uint16_t)(1u | 1u << (x % 12)), 0);
+        g.bond_to = (int8_t)(x % 12);
+        g.dir = 1;
+        break;
+    case CK_CHORD:
+    case CK_CHORD_EAR:
+        ax_sig_init(&g, AX_BOUND, AX_CHORDS[x].mask, 0);
+        g.alt = AX_CHORDS[x].alt;
+        break;
+    default: ax_sig_init(&g, AX_FIELD, AX_FIELDS[x].mask, 0); break;
+    }
+    g.cx = cx;
+    g.cy = cy;
+    g.r = r;
+    g.quiet = 1;
+    g.fifths = ax.fifths;
+    ax_sigil(&g);
+    if (k == CK_IVL_EAR || k == CK_CHORD_EAR || k == CK_FIELD_EAR)
+        fb_text_c(&CF_FONT_MICRO, cx, cy + r + 4, "EAR", AXK_AMBER, 1);
+    else if (k == CK_MISSING)
+        fb_text_c(&CF_FONT_MICRO, cx, cy + r + 4, "MISSING", AXK_GREY, 1);
+    else if (k == CK_MORPH)
+        fb_text_c(&CF_FONT_MICRO, cx, cy + r + 4, "MORPH", AXK_GREY, 1);
+}
+/* LEARN's own screens: the lesson to choose (its cards), or the report (what to work on) */
+static void ax_draw_lesson(void)
+{
+    const ax_lesson_t *l = &AXL[ax.lsel % AXL_N];
+    int i, n = l->n;
+    if (ax.lph == AXLP_DONE) {
+        int w[3], k = ax_learn_weakest(&axl, w, 3), y = 48;
+        char t[32];
+        y = 62;
+        fb_rect(24, 50, 192, 112, AXK_BG);
+        fb_frame(24, 50, 192, 112, AXK_S2);
+        fb_text_c(&CF_FONT_UI, 120, 52, k ? "WORK ON" : "NOTHING WEAK", k ? AXK_AMBER : AXK_CYAN, 1);
+        for (i = 0; i < k; i++, y += 18) {
+            char b2[40];
+            ax_learn_card_name(t, sizeof t, axl.card[w[i]]);
+            fb_signs(t, b2, sizeof b2);
+            fb_text_c(&CF_FONT_UI, 120, y + 8, b2, AXK_WHITE, 1);
+        }
+        if (ax.tutor[0]) {
+            char b2[48];
+            fb_signs(ax.tutor, b2, sizeof b2);
+            fb_text_c(&CF_FONT_UI, 120, 142, b2, AXK_GREY, 1);
+        }
+        return;
+    }
+    if (l->flags & AXL_FINAL) {
+        ax_sig_t g;
+        ax_sig_init(&g, AX_FIELD, AX_ALL, 0);
+        g.shimmer = 1;
+        ax_sigil(&g);
+        return;
+    }
+    for (i = 0; i < n; i++) {                    /* its cards: up to four a row */
+        int row = i / 4, inrow = n - row * 4 > 4 ? 4 : n - row * 4, col = i % 4;
+        int cx = 120 + (col * 2 - (inrow - 1)) * 27, cy = n > 4 ? 66 + row * 64 : 96;
+        ax_card_sigil(l->card[i], cx, cy, n > 4 ? 18 : 22);
+    }
 }
 
 static void ax_draw(void)
@@ -1461,9 +1934,31 @@ static void ax_draw(void)
     int glitch = ax.glitch_until && (int32_t)(ax.glitch_until - now) > 0;
     int i;
     char b[48];
-    if (ax.run.on || (ax.summary && ax.answered))
+    int lesson_screen = ax.mode == AXM_LEARN && !ax_lrn_on();
+    if (ax_quiz() || (ax.summary && ax.answered))
         ax_view_challenge(&v);
-    else
+    else if (lesson_screen) {
+        const ax_lesson_t *l = &AXL[ax.lsel % AXL_N];
+        ax_sig_init(&v.s, AX_FIELD, 0, -1);
+        v.field = AX_ALL;
+        v.chord = 0;
+        v.chord_root = -1;
+        str_cpy(v.a, "", sizeof v.a);
+        ax_num(v.a, ax.lsel + 1);
+        ax_cat(v.a, " ", sizeof v.a);
+        ax_cat(v.a, l->title, sizeof v.a);
+        str_cpy(v.b, l->what, sizeof v.b);
+        if (ax.lph == AXLP_DONE) {
+            int tot = axl.total;
+            str_cpy(v.a, ax.lmastered ? "MASTERED" : "PAUSED", sizeof v.a);
+            str_cpy(v.b, "right ", sizeof v.b);
+            ax_num(v.b + str_len(v.b), axl.right);
+            ax_cat(v.b, "/", sizeof v.b);
+            ax_num(v.b + str_len(v.b), tot);
+            ax_cat(v.b, "   next: lesson ", sizeof v.b);
+            ax_num(v.b + str_len(v.b), ax.lsel + 1);
+        }
+    } else
         ax_view_explore(&v);
     fb_unclip();
     fb_fill(AXK_BG);
@@ -1506,20 +2001,49 @@ static void ax_draw(void)
                     ax_node_xy(AXC_X, AXC_Y, AXC_R - 18, b2, ax.fifths, &x1, &y1);
                     fb_line(x0, y0, x1, y1, AXK_HUE(a2, 2));
                 }
-    } else
+    } else if (lesson_screen)
+        ax_draw_lesson();
+    else
         ax_sigil(&v.s);
-    if (!ax.run.on && v.s.mask && !ax.shadow)
+    if (!ax_quiz() && !lesson_screen && v.s.mask && !ax.shadow)
         ax_charge(AXC_X - 14, AX_Y1 - 14, v.s.mask);
+    if (ax_lrn_on() && ax.tutor_until && (int32_t)(ax.tutor_until - now) > 0) {   /* the tutor's line */
+        char tb[48];
+        fb_signs(ax.tutor, tb, sizeof tb);
+        fb_rect(0, AX_Y1 - 30, FB_W, 21, AXK_BG);
+        fb_text(&CF_FONT_MICRO, 6, AX_Y1 - 29, "TUTOR", AXK_AMBER, 1);
+        fb_text_c(&CF_FONT_UI, 120, AX_Y1 - 24, tb, AXK_WHITE, 1);
+    }
     /* the HUD: the form, its layers, the run */
-    ax_form(212, 36, 16, ax.run.on || ax.summary ? ax.run.stage : 0, now);
+    ax_form(212, 36, 16, ax.run.on || ax.summary ? ax.run.stage : ax_lrn_on() ? ax_stage_of(ax.llayers, 0) : 0, now);
     for (i = 0; i < AX_LAYERS; i++)
         fb_rect(197 + i * 5, 60, 4, 4, i < ax.layers_heard ? AXK_CYAN : AXK_S1);
     fb_text(&CF_FONT_MICRO, 6, AX_Y0 + 4, AXM_NAME[ax.mode], AXK_GREY, 1);
     fb_text(&CF_FONT_MICRO, 6, AX_Y0 + 11, AXM_WHAT[ax.mode], AXK_DIM, 1);
-    b[0] = 'T';
-    b[1] = (char)('0' + ax.tier);
-    b[2] = 0;
-    fb_text(&CF_FONT_MICRO, 6, AX_Y0 + 18, b, AXK_DIM, 1);
+    if (ax.mode == AXM_LEARN) {                  /* the lesson, and how far its own cards are */
+        int of = 0, got;
+        str_cpy(b, "LESSON ", sizeof b);
+        ax_num(b + 7, ax.lsel + 1);
+        ax_cat(b, "/36", sizeof b);
+        fb_text(&CF_FONT_MICRO, 6, AX_Y0 + 18, b, AXK_CYAN, 1);
+        if (ax_lrn_on() || ax.lph == AXLP_DONE) {
+            got = ax_learn_progress(&axl, &of);
+            fb_rect(6, AX_Y0 + 26, 44, 3, AXK_S1);
+            if (of)
+                fb_rect(6, AX_Y0 + 26, 44 * got / of, 3, AXK_CYAN);
+            if (axl.total) {
+                str_cpy(b, "RES ", sizeof b);
+                ax_num(b + 4, axl.right * 100 / axl.total);
+                ax_cat(b, "%", sizeof b);
+                fb_text(&CF_FONT_MICRO, 6, AX_Y0 + 32, b, AXK_GREY, 1);
+            }
+        }
+    } else {
+        b[0] = 'T';
+        b[1] = (char)('0' + ax.tier);
+        b[2] = 0;
+        fb_text(&CF_FONT_MICRO, 6, AX_Y0 + 18, b, AXK_DIM, 1);
+    }
     if (ax.fifths)
         fb_text(&CF_FONT_MICRO, 18, AX_Y0 + 18, "5THS", AXK_AMBER, 1);
     if (ax.run.on || ax.summary) {
@@ -1535,7 +2059,7 @@ static void ax_draw(void)
     }
     ax_runes(AX_Y1 - 6, st);
     ax_brackets(now - ax.beat_ms < 110u ? AXK_S3 : AXK_S2);
-    if (glitch && ax_motion()) {                 /* the tear: a few bands slide sideways (the stage only) */
+    if (glitch && ax_motion() && !lesson_screen) {   /* the tear: a few bands slide sideways (the stage only) */
         uint32_t h = now * 2654435761u;
         int band;
         for (band = 0; band < 5; band++) {
@@ -1583,7 +2107,11 @@ static void ax_draw(void)
         }
     }
     fb_text_c(&CF_FONT_MICRO, 120, AX_BAND + 42,
-              ax.run.on ? "SEL HINT   ARP AGAIN   PLAY STOP" : "SELECT MODE   PLAY CHALLENGE   HOME SYNTH", AXK_DIM, 1);
+              ax.run.on ? "SEL HINT   ARP AGAIN   PLAY STOP" :
+              ax_lrn_on() ? (ax.lph == AXLP_TEACH ? "PLAY IT AS SHOWN   ARP HEAR AGAIN" :
+                             "SEL HINT   ARP AGAIN   PLAY REPORT") :
+              ax.mode == AXM_LEARN ? "ALGO LESSON   PLAY START   SELECT MODE" :
+              "SELECT MODE   PLAY CHALLENGE   HOME SYNTH", AXK_DIM, 1);
     if (ax.settings)
         ax_draw_settings();
 }
@@ -1595,17 +2123,24 @@ static void ax_leds(void)
     uint32_t k, blink = (cu.now / 250u) & 1u, st = ax_now_step();
     uint16_t show = 0, tgt = 0;
     int root = -1, reveal = ax.reveal_until && (int32_t)(ax.reveal_until - st) > 0;
-    if (ax.run.on && !ax.answered) {
+    if (ax_quiz() && !ax.answered) {
         const ax_prompt_t *p = &ax.shown;
-        if (ax.hinted || reveal)
+        int teach = ax_lrn_on() && ax.lph == AXLP_TEACH;
+        if (ax.hinted || reveal || teach)
             tgt = p->target;
         if (p->kind == AXP_FIELD_MISSING || p->kind == AXP_FIELD_MORPH)
             show = p->shown;
-        if (p->kind == AXP_BOND_PLAY)
+        if (p->kind == AXP_BOND_PLAY || p->kind == AXP_BOND_NAME) {
             cf_led(blink ? lit : mid, 14u + p->start_key, 1);
-    } else if ((ax.run.on || ax.summary) && reveal)
+            if (tgt && p->kind == AXP_BOND_PLAY)  /* (a bond's other end is one key, not every octave of it) */
+                cf_led(blink ? dim : lit, 14u + (uint32_t)(p->start_key + p->ivl), 1);
+            tgt = 0;
+        }
+        if (p->name_kind != 0xFF)
+            tgt = 0;                             /* (a name to hear: the keys tell nothing) */
+    } else if ((ax_quiz() || ax.summary) && reveal)
         tgt = ax.shown.target;
-    else if (!ax.run.on) {
+    else if (!ax_quiz()) {
         if (ax.mode == AXM_FIELD || ax.mode == AXM_ORRERY)
             show = ax.fmask, root = ax.root;
         else if (ax.mode == AXM_BOUND && !ax.held)
@@ -1622,11 +2157,11 @@ static void ax_leds(void)
         else if ((show >> pc) & 1u)
             cf_led(dim, id, 1);
     }
-    cf_led(ax.run.on ? ((st & 3u) == 0u ? lit : mid) : dim, panel.btn[B_PLAY], 1);
-    cf_led(ax.run.on && !ax.answered ? (ax.hinted ? lit : dim) : faint, panel.btn[B_SCL], 1);
-    cf_led(ax.run.on && ax.shown.name_kind != 0xFF && !ax.answered ? (ax.name_on ? lit : dim) : faint,
+    cf_led(ax_quiz() ? ((st & 3u) == 0u ? lit : mid) : dim, panel.btn[B_PLAY], 1);
+    cf_led(ax_quiz() && !ax.answered ? (ax.hinted ? lit : dim) : faint, panel.btn[B_SCL], 1);
+    cf_led(ax_quiz() && ax.shown.name_kind != 0xFF && !ax.answered ? (ax.name_on ? lit : dim) : faint,
            panel.btn[B_REC], 1);
-    cf_led(ax.run.on && !ax.answered && (ax.shown.kind == AXP_BOND_PLAY || ax.shown.kind == AXP_FIELD_NAME) ? dim :
+    cf_led(ax_quiz() && !ax.answered && (ax.shown.kind == AXP_BOND_PLAY || ax.shown.kind == AXP_FIELD_NAME) ? dim :
            faint, panel.btn[B_ARP], 1);
     cf_led(ax.fifths ? lit : dim, panel.btn[B_FX], 1);
     cf_led(ax.shadow ? lit : dim, panel.btn[B_LFO], 1);

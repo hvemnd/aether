@@ -64,6 +64,9 @@ jobs:
           cc -std=c99 -Wall -Wextra -Werror -Wno-unused-function -Ibuild/gen -Ifirmware/src -o build/host/ax_core_test \
              tests/ax_core_test.c
           build/host/ax_core_test
+          cc -std=c99 -Wall -Wextra -Werror -Wno-unused-function -Ibuild/gen -Ifirmware/src -o build/host/ax_learn_test \
+             tests/ax_learn_test.c
+          build/host/ax_learn_test
           cc -std=gnu11 -O2 -w -Itools/emu/web/compat -Ibuild/gen -Ifirmware/src -DEMU_WEB \
              -o build/host/ax_headless tests/ax_headless.c -lm
           build/host/ax_headless build/ax-run

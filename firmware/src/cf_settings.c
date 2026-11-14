@@ -40,6 +40,8 @@ _Static_assert(__builtin_offsetof(cf_set_t, notes_in) == 172u && __builtin_offse
                "settings: NOTES IN, the ARP's byte, 0.5's mark and IN CH sit where 0.4.x keeps the looper's four");
 _Static_assert(__builtin_offsetof(cf_set_t, ax_cfg) == 181u && __builtin_offsetof(cf_set_t, snd_layer) == 182u,
                "settings: AETHER//SYNTAX's byte sits in the padding before the LAYER's sound");
+_Static_assert(__builtin_offsetof(cf_set_t, ax_theme) == 159u && __builtin_offsetof(cf_set_t, snd) == 160u,
+               "settings: AETHER//SYNTAX's theme sits in the padding before the sounds");
 _Static_assert(OBJ_PROJECT0 + 3u == ST_LOG_OBJ, "settings: the object that keeps the log");
 
 static cf_rec_t cf_rec;
@@ -118,6 +120,8 @@ static void cfs_sanitize(cf_set_t *s)
     s->boot_sound = s->boot_sound != 0;
     if (!(s->resume & CF_RESUME_ON))
         s->resume = 0;
+    if (s->ax_theme > 15u)                        /* (AETHER//SYNTAX's theme: a byte that was padding) */
+        s->ax_theme = 0;
     if ((s->ax_cfg >> 2) > 41u)                   /* (AETHER//SYNTAX's tempo out of range: 120) */
         s->ax_cfg &= 3u;
     if (s->arp.mode >= CF_ARP_NMODES || s->arp.oct < 1u || s->arp.oct > 4u || s->arp.rate >= CF_ARP_NRATES ||

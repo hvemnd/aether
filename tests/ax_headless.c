@@ -112,11 +112,13 @@ static void answer(int right)
             tap_key(key_for_pc(pc % 12, 7));
         }
         break;
-    case AXP_FIELD_NAME: {
+    case AXP_FIELD_NAME:
+    case AXP_CHORD_NAME:
+    case AXP_BOND_NAME: {
         int i, n = ax_name_count(p), want = p->name_ans, wrong = -1;
-        if (!right) {                            /* (a field with other nodes from this root) */
+        if (!right) {                            /* (a name the judge refuses) */
             for (i = 0; i < n && wrong < 0; i++)
-                if (ax_rot(AX_FIELDS[ax_name_opt(p, i)].mask, p->root) != p->target)
+                if (ax_judge_name(p, ax_name_opt(p, i)) != AXJ_RIGHT)
                     wrong = ax_name_opt(p, i);
             want = wrong;
         }
@@ -126,6 +128,17 @@ static void answer(int right)
         btn(HB_REC);
         break;
     }
+    case AXP_FIELD_PLAY:
+        if (!right) {
+            for (pc = 0; pc < 12 && ((p->target >> pc) & 1u); pc++)
+                ;
+            tap_key(key_for_pc(pc % 12, 7));
+            break;
+        }
+        for (pc = 0; pc < 12; pc++)
+            if ((p->target >> ((p->root + pc) % 12)) & 1u)
+                tap_key(key_for_pc((p->root + pc) % 12, 7));
+        break;
     case AXP_FIELD_MORPH:
         if (!right) {
             uint16_t gone = (uint16_t)(p->shown & ~p->neutral);
@@ -165,6 +178,57 @@ static void answer(int right)
     }
     default: break;
     }
+}
+
+static void wait_learn(void)
+{
+    int n = 0;
+    while ((ax.answered || axa_prompt_busy) && ax_lrn_on() && n++ < 20000)
+        step(5);
+    step(20);
+}
+/* a lesson played through: every prompt answered right except every `miss`th asked one (0: none); returns prompts */
+static int learn_lesson(int lesson, int miss, const char *tag, int max)
+{
+    int n = 0, teach = 0, asked = 0;
+    char name[64];
+    while (ax.mode != AXM_LEARN)
+        turn(HE_SELECT, 1);
+    while (ax.lsel != lesson)
+        turn(HE_ALGO, ax.lsel < lesson ? 1 : -1);
+    btn(HB_PLAY);
+    CHECK(ax_lrn_on(), "%s: PLAY starts lesson %d", tag, lesson + 1);
+    while (ax_lrn_on() && n < max) {
+        int was_teach, right;
+        wait_learn();
+        if (!ax_lrn_on())
+            break;
+        was_teach = ax.lph == AXLP_TEACH;
+        right = was_teach || !miss || (++asked % miss) != 0;
+        if (n == 0 || (n == 3 && !was_teach)) {
+            snprintf(name, sizeof name, "%s_%s%d", tag, was_teach ? "teach" : "quiz", n);
+            shot(name);
+        }
+        answer(right);
+        step(30);
+        if (was_teach) {
+            teach++;
+            CHECK(ax.answered || !ax_lrn_on(), "%s: a card taught by playing it (kind %d)", tag, ax.shown.kind);
+        } else if (!right && n < 30 && ax.verdict == AXJ_WRONG) {
+            step(200);
+            snprintf(name, sizeof name, "%s_tutor", tag);
+            shot(name);
+        }
+        n++;
+    }
+    if (ax_lrn_on())                             /* (not mastered in time: PLAY, its report) */
+        btn(HB_PLAY);
+    step(400);
+    snprintf(name, sizeof name, "%s_report", tag);
+    shot(name);
+    printf("%-10s lesson %2d: %s after %d prompts (%d taught), right %d/%d\n", tag, lesson + 1,
+           ax.lmastered ? "mastered" : "not mastered", n, teach, axl.right, axl.total);
+    return ax.lmastered ? n : -1;
 }
 
 static void run_mode(int mode, int tier, const char *tag)
@@ -278,6 +342,7 @@ static void demo(void)
 
 int main(int argc, char **argv)
 {
+    setvbuf(stdout, NULL, _IOLBF, 0);
     if (getenv("AX_DEMO")) {
         demo_dir = getenv("AX_DEMO");
         demo();
@@ -294,7 +359,17 @@ int main(int argc, char **argv)
     web_boot();
     step(1600);
     CHECK(ax.open, "AETHER opens at power-on");
+    CHECK(ax.mode == AXM_LEARN && ax.lph == AXLP_IDLE, "LEARN, choosing a lesson, at power-on");
     shot("00_boot");
+    turn(HE_ALGO, 7);
+    step(100);
+    shot("00_lesson8");
+    turn(HE_ALGO, 17);
+    step(100);
+    shot("00_lesson25");
+    turn(HE_ALGO, -24);
+    while (ax.mode != AXM_FIELD)
+        turn(HE_SELECT, 1);
 
     /* EXPLORE: every mode, the laws */
     turn(HE_SELECT, -1);                         /* FIELD -> BOND */
@@ -375,6 +450,37 @@ int main(int argc, char **argv)
     step(4000);
     printf("panel: %.0f tiles/s idle (a full screen is 225 tiles, ~77 ms)\n",
            (fb_tiles_sent - f0) * 1000.0 / (double)(dev_ms - t0));
+
+    /* LEARN: lessons through the firmware: notes, ear triads, a scale, modes by morph; then a learner who misses */
+    CHECK(learn_lesson(0, 0, "l01", 120) > 0, "lesson 1 mastered");
+    CHECK(learn_lesson(8, 0, "l09", 160) > 0, "lesson 9 (triads by ear) mastered");
+    CHECK(learn_lesson(6, 0, "l07", 160) > 0, "lesson 7 (the major scale) mastered");
+    CHECK(learn_lesson(25, 0, "l26", 200) > 0, "lesson 26 (morphing modes) mastered");
+    CHECK(learn_lesson(17, 0, "l18", 300) > 0, "lesson 18 (intervals by ear) mastered");
+    {
+        int w[3];
+        learn_lesson(10, 3, "l11miss", 60);      /* every third asked card missed, stopped by PLAY */
+        if (ax_lrn_on())
+            btn(HB_PLAY);
+        step(200);
+        CHECK(ax.lph == AXLP_DONE, "PLAY stops a lesson: its report");
+        CHECK(ax_learn_weakest(&axl, w, 3) > 0, "the tutor has something to work on");
+        shot("l11_report");
+    }
+    /* themes: GLO, ALGORITHM through all of them */
+    {
+        int t;
+        char name[32];
+        btn(HB_GLO);
+        for (t = 0; t < AX_NTHEMES; t++) {
+            step(80);
+            snprintf(name, sizeof name, "theme%02d", t);
+            shot(name);
+            turn(HE_ALGO, 1);
+        }
+        CHECK(cs.ax_theme == 0, "the themes wrap round (%d)", cs.ax_theme);
+        btn(HB_GLO);
+    }
 
     /* CHALLENGE: every mode */
     run_mode(AXM_PARTICLE, 1, "particle");

@@ -160,9 +160,10 @@ static uint32_t ax_rand(uint32_t *s)             /* xorshift32: seeded, so a tes
 static int ax_randn(uint32_t *s, int n) { return n > 0 ? (int)(ax_rand(s) % (uint32_t)n) : 0; }
 
 /* ------------------------------------------------------------- the modes --- */
-enum { AXM_PARTICLE, AXM_BOND, AXM_FIELD, AXM_BOUND, AXM_ORRERY, AXM_N };
-static const char *const AXM_NAME[AXM_N] = {"PARTICLE", "BOND", "FIELD", "BOUND STATE", "ORRERY"};
-static const char *const AXM_WHAT[AXM_N] = {"NOTES", "INTERVALS", "SCALES + MODES", "CHORDS", "ALL TOGETHER"};
+enum { AXM_PARTICLE, AXM_BOND, AXM_FIELD, AXM_BOUND, AXM_ORRERY, AXM_LEARN, AXM_N };
+static const char *const AXM_NAME[AXM_N] = {"PARTICLE", "BOND", "FIELD", "BOUND STATE", "ORRERY", "LEARN"};
+static const char *const AXM_WHAT[AXM_N] = {"NOTES", "INTERVALS", "SCALES + MODES", "CHORDS", "ALL TOGETHER",
+                                            "LESSONS + REVIEW"};
 
 /* ------------------------------------------------------------ the prompts --- */
 enum {
@@ -173,6 +174,9 @@ enum {
     AXP_FIELD_NAME,              /* a field heard: name it */
     AXP_FIELD_MORPH,             /* one field to another on the same root: play only the nodes that change */
     AXP_CHORD_PLAY,              /* a chord's symbol: play any voicing */
+    AXP_FIELD_PLAY,              /* a field's name: play every one of its nodes, any order, any octave */
+    AXP_CHORD_NAME,              /* a chord heard: name its type */
+    AXP_BOND_NAME,               /* a bond heard: name it */
 };
 typedef struct {
     uint8_t kind;                /* AXP_* */
@@ -188,6 +192,8 @@ typedef struct {
     uint8_t name_kind;           /* a prompt that can be named with ALGORITHM: AX_BOND (classes by semitones) or AX_FIELD;
                                   * 0xFF none */
     uint8_t name_ans;            /* .. the right option: semitones (BOND) or a field index */
+    uint8_t nopt;                /* the names offered (0: every one of name_kind's); LEARN offers only what was taught */
+    uint8_t opt[12];
 } ax_prompt_t;
 
 /* the fields a tier asks about (the chromatic never: there is nothing to find in it) */
@@ -214,6 +220,7 @@ static void ax_prompt_make(ax_prompt_t *p, int mode, int tier, int wave, uint32_
     p->target = p->shown = p->neutral = 0;
     p->name_kind = 0xFF;
     p->name_ans = 0;
+    p->nopt = 0;
     switch (mode) {
     case AXM_PARTICLE:
     default: {
@@ -328,6 +335,11 @@ static int ax_judge_key(const ax_prompt_t *p, int key, uint32_t held, uint16_t *
             return AXJ_WRONG;
         *locked = hp;
         return hp == p->target ? AXJ_RIGHT : AXJ_NONE;
+    case AXP_FIELD_PLAY:                          /* (struck one by one: each node of the field locks on) */
+        if (!(pcb & p->target))
+            return AXJ_WRONG;
+        *locked |= pcb;
+        return (*locked & p->target) == p->target ? AXJ_RIGHT : AXJ_NONE;
     default:
         return AXJ_NONE;
     }
@@ -339,15 +351,30 @@ static int ax_judge_name(const ax_prompt_t *p, int opt)
         return opt == (p->ivl < 0 ? -p->ivl : p->ivl) ? AXJ_RIGHT : AXJ_WRONG;
     if (p->name_kind == AX_FIELD)                 /* (two fields with the same nodes from this root: either name) */
         return ax_rot(AX_FIELDS[opt % AX_FIELDS_N].mask, p->root) == p->target ? AXJ_RIGHT : AXJ_WRONG;
+    if (p->name_kind == AX_BOUND)
+        return ax_rot(AX_CHORDS[opt % AX_CHORDS_N].mask, p->root) == p->target ? AXJ_RIGHT : AXJ_WRONG;
     return AXJ_NONE;
 }
 /* the options ALGORITHM steps through for a named answer: how many, and option i's label */
-static int ax_name_count(const ax_prompt_t *p) { return p->name_kind == AX_BOND ? 12 : AX_FIELDS_N - 1; }
+static int ax_name_count(const ax_prompt_t *p)
+{
+    return p->nopt ? p->nopt : p->name_kind == AX_BOND ? 12 : p->name_kind == AX_BOUND ? AX_CHORDS_N : AX_FIELDS_N - 1;
+}
 static int ax_name_opt(const ax_prompt_t *p, int i)   /* the value option i stands for */
 {
     int n = ax_name_count(p);
     i = ((i % n) + n) % n;
+    if (p->nopt)
+        return p->opt[i];
     return p->name_kind == AX_BOND ? i + 1 : i;
+}
+static const char *ax_name_label(const ax_prompt_t *p, int v)   /* option value v as words */
+{
+    if (p->name_kind == AX_BOND)
+        return AX_IVL_NAME[v % 13];
+    if (p->name_kind == AX_BOUND)
+        return AX_CHORDS[v % AX_CHORDS_N].name;
+    return AX_FIELDS[v % AX_FIELDS_N].name;
 }
 
 /* ---------------------------------------------------------------- a run --- */
